@@ -1102,13 +1102,11 @@ const LIGHTWALLETD_FAILURE_MESSAGES: &[&str] = &[
 ///
 /// These `lightwalletd` messages look like failure messages, but they are actually ok.
 /// So when we see them in the logs, we make the test continue.
-const LIGHTWALLETD_IGNORE_MESSAGES: &[&str] = &[
+const LIGHTWALLETD_EMPTY_ZEBRA_STATE_IGNORE_MESSAGES: &[&str] = &[
     // Exceptions to lightwalletd custom RPC error messages:
     //
     // This log matches the "error with" RPC error message,
     // but we expect Zebra to start with an empty state.
-    //
-    // TODO: this exception should not be used for the cached state tests (#3511)
     r#"No Chain tip available yet","level":"warning","msg":"error with getblockchaininfo rpc, retrying"#,
 ];
 
@@ -1209,16 +1207,29 @@ fn lightwalletd_integration_test(test_type: LightwalletdTestType) -> Result<()> 
         LAUNCH_DELAY
     };
 
+    let mut zebrad_failure_messages: Vec<String> = ZEBRA_FAILURE_MESSAGES
+        .iter()
+        .chain(PROCESS_FAILURE_MESSAGES)
+        .map(ToString::to_string)
+        .collect();
+
+    if test_type.needs_zebra_cached_state() {
+        // Fail if we need a cached Zebra state, but it's empty
+        zebrad_failure_messages.push("loaded Zebra state cache tip=None".to_string());
+    }
+    if test_type == LaunchWithEmptyState {
+        // Fail if we need an empty Zebra state, but it has blocks
+        zebrad_failure_messages
+            .push(r"loaded Zebra state cache tip=.*Height\([1-9][0-9]*\)".to_string());
+    }
+
     let zdir = testdir()?.with_exact_config(&config)?;
     let mut zebrad = zdir
         .spawn_child(args!["start"])?
         .with_timeout(zebrad_timeout)
         .with_failure_regex_iter(
             // TODO: replace with a function that returns the full list and correct return type
-            ZEBRA_FAILURE_MESSAGES
-                .iter()
-                .chain(PROCESS_FAILURE_MESSAGES)
-                .cloned(),
+            zebrad_failure_messages,
             NO_MATCHES_REGEX_ITER.iter().cloned(),
         );
 
@@ -1270,7 +1281,18 @@ fn lightwalletd_integration_test(test_type: LightwalletdTestType) -> Result<()> 
         .collect();
 
     if test_type.needs_zebra_cached_state() {
+        // Fail if we need a cached Zebra state, but it's empty
         lightwalletd_failure_messages.push("No Chain tip available yet".to_string());
+    }
+    if test_type.needs_lightwalletd_cached_state() {
+        // Fail if we need a cached lightwalletd state, but it isn't near the tip
+        lightwalletd_failure_messages
+            .push("Got sapling height 419200 block height [0-9]{1,6} chain main".to_string());
+    }
+    if test_type == FullSyncFromGenesis {
+        // Fail if we need an empty lightwalletd state, but it has blocks
+        lightwalletd_failure_messages
+            .push("Got sapling height 419200 block height [1-9][0-9]* chain main".to_string());
     }
 
     let lightwalletd_timeout = if test_type == FullSyncFromGenesis {
@@ -1284,13 +1306,20 @@ fn lightwalletd_integration_test(test_type: LightwalletdTestType) -> Result<()> 
         LIGHTWALLETD_DELAY
     };
 
+    let lightwalletd_ignore_messages = if test_type == LaunchWithEmptyState {
+        LIGHTWALLETD_EMPTY_ZEBRA_STATE_IGNORE_MESSAGES
+            .iter()
+            .cloned()
+    } else {
+        NO_MATCHES_REGEX_ITER.iter().cloned()
+    };
+
     let mut lightwalletd = lightwalletd
         .with_timeout(lightwalletd_timeout)
         .with_failure_regex_iter(
             // TODO: replace with a function that returns the full list and correct return type
             lightwalletd_failure_messages,
-            // TODO: some exceptions do not apply to the cached state tests (#3511)
-            LIGHTWALLETD_IGNORE_MESSAGES.iter().cloned(),
+            lightwalletd_ignore_messages,
         );
 
     // Wait until `lightwalletd` has launched
@@ -1311,7 +1340,8 @@ fn lightwalletd_integration_test(test_type: LightwalletdTestType) -> Result<()> 
     }
 
     if test_type.needs_lightwalletd_cached_state() {
-        lightwalletd.expect_stdout_line_matches("Found [0-9]{7} blocks in cache")?;
+        // TODO: expect `[0-9]{7}` when we're using the tip cached state (#4155)
+        lightwalletd.expect_stdout_line_matches("Found [0-9]{6,7} blocks in cache")?;
     } else {
         // Timeout the test if we're somehow accidentally using a cached state in our temp dir
         lightwalletd.expect_stdout_line_matches("Found 0 blocks in cache")?;
@@ -1348,11 +1378,12 @@ fn lightwalletd_integration_test(test_type: LightwalletdTestType) -> Result<()> 
 
         // Wait for lightwalletd to sync to Zebra's tip
         lightwalletd.expect_stdout_line_matches(regex::escape("Ingestor adding block to cache"))?;
+        lightwalletd.expect_stdout_line_matches(regex::escape("Ingestor waiting for block"))?;
+        // Check Zebra is still at the tip (also clears and prints Zebra's logs)
+        zebrad.expect_stdout_line_matches(regex::escape("sync_percent=100"))?;
 
         // lightwalletd doesn't log anything when we've reached the tip.
         // But when it gets near the tip, it starts using the mempool.
-        //
-        // TODO: check that lightwalletd has ingested Zebra's tip block (or higher)
         lightwalletd.expect_stdout_line_matches(regex::escape(
             "Block hash changed, clearing mempool clients",
         ))?;
