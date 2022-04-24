@@ -9,6 +9,7 @@ use std::{
     env,
     net::SocketAddr,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use zebra_test::{
@@ -20,7 +21,10 @@ use zebrad::config::ZebradConfig;
 
 use super::{
     config::{default_test_config, CACHED_STATE_PATH_VAR},
-    launch::ZebradTestDirExt,
+    launch::{
+        ZebradTestDirExt, LIGHTWALLETD_DELAY, LIGHTWALLETD_FULL_SYNC_TIP_DELAY,
+        LIGHTWALLETD_UPDATE_TIP_DELAY,
+    },
 };
 
 use LightwalletdTestType::*;
@@ -221,16 +225,14 @@ impl LightwalletdTestType {
     pub fn needs_zebra_cached_state(&self) -> bool {
         match self {
             LaunchWithEmptyState => false,
-            FullSyncFromGenesis => true,
-            UpdateCachedState => true,
+            FullSyncFromGenesis | UpdateCachedState => true,
         }
     }
 
     /// Does this test need a lightwalletd cached state?
     pub fn needs_lightwalletd_cached_state(&self) -> bool {
         match self {
-            LaunchWithEmptyState => false,
-            FullSyncFromGenesis => false,
+            LaunchWithEmptyState | FullSyncFromGenesis => false,
             UpdateCachedState => true,
         }
     }
@@ -277,5 +279,22 @@ impl LightwalletdTestType {
     /// Returns the lightwalletd state path for this test, if set.
     pub fn lightwalletd_state_path(&self) -> Option<PathBuf> {
         env::var_os(LIGHTWALLETD_DATA_DIR_VAR).map(Into::into)
+    }
+
+    /// Returns the `zebrad` timeout for this test type.
+    pub fn zebrad_timeout(&self) -> Duration {
+        match self {
+            LaunchWithEmptyState => LIGHTWALLETD_DELAY,
+            FullSyncFromGenesis | UpdateCachedState => LIGHTWALLETD_UPDATE_TIP_DELAY,
+        }
+    }
+
+    /// Returns the `lightwalletd` timeout for this test type.
+    pub fn lightwalletd_timeout(&self) -> Duration {
+        match self {
+            LaunchWithEmptyState => LIGHTWALLETD_DELAY,
+            UpdateCachedState => LIGHTWALLETD_UPDATE_TIP_DELAY,
+            FullSyncFromGenesis => LIGHTWALLETD_FULL_SYNC_TIP_DELAY,
+        }
     }
 }
