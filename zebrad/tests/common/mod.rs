@@ -11,6 +11,7 @@
 
 pub mod check;
 pub mod config;
+pub mod failure_messages;
 pub mod launch;
 pub mod lightwalletd;
 pub mod sync;
