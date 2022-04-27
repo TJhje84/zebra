@@ -181,7 +181,7 @@ jobs:
       - name: Run tests with lightwalletd full sync
         run: |
           docker pull ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }}
-          docker run -e ZEBRA_SKIP_IPV6_TESTS -e ZEBRA_TEST_LIGHTWALLETD -e ZEBRA_CACHED_STATE_PATH -e LIGHTWALLETD_DATA_DIR --name lightwalletd-tests -t ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }} cargo test --locked --release --features enable-sentry -- --ignored --nocapture  lightwalletd_full_sync
+          docker run -e ZEBRA_SKIP_IPV6_TESTS -e ZEBRA_TEST_LIGHTWALLETD -e ZEBRA_CACHED_STATE_DIR -e LIGHTWALLETD_DATA_DIR --name lightwalletd-tests -t ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }} cargo test --locked --release --features enable-sentry -- --ignored --nocapture  lightwalletd_full_sync
         env:
           ZEBRA_CACHED_STATE_PATH: '$HOME/.cache/zebra'
           LIGHTWALLETD_DATA_DIR: '$HOME/.cache/lightwalletd'
@@ -201,7 +201,7 @@ jobs:
       - name: Run tests with lightwalletd update sync
         run: |
           docker pull ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }}
-          docker run -e ZEBRA_SKIP_IPV6_TESTS -e ZEBRA_TEST_LIGHTWALLETD -e ZEBRA_CACHED_STATE_PATH -e LIGHTWALLETD_DATA_DIR --name lightwalletd-tests -t ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }} cargo test --locked --release --features enable-sentry -- --ignored --nocapture  lightwalletd_update_sync
+          docker run -e ZEBRA_SKIP_IPV6_TESTS -e ZEBRA_TEST_LIGHTWALLETD -e ZEBRA_CACHED_STATE_DIR -e LIGHTWALLETD_DATA_DIR --name lightwalletd-tests -t ${{ env.GAR_BASE }}/${{ env.IMAGE_NAME }}:sha-${{ env.GITHUB_SHA_SHORT }} cargo test --locked --release --features enable-sentry -- --ignored --nocapture  lightwalletd_update_sync
         env:
           ZEBRA_CACHED_STATE_PATH: '$HOME/.cache/zebra'
           LIGHTWALLETD_DATA_DIR: '$HOME/.cache/lightwalletd'

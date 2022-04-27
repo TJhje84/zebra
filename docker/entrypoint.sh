@@ -24,7 +24,7 @@ case "$1" in
         elif [[ "$TEST_FULL_SYNC" -eq "1" ]]; then
             exec cargo "test" "--locked" "--release" "--features" "enable-sentry" "--test" "acceptance" "--" "--nocapture" "--ignored" "full_sync_mainnet"
         elif [[ "$TEST_LWD_RPC_SYNC" -eq "1" ]]; then
-            exec cargo "test" "--locked" "--release" "--features" "enable-sentry" "--" "--nocapture" "--ignored" "fully_synced_rpc_test"
+            exec cargo "test" "--locked" "--release" "--features" "enable-sentry" "--test" "acceptance" "--" "--nocapture" "--ignored" "fully_synced_rpc_test"
         else
             exec "$@"
         fi
