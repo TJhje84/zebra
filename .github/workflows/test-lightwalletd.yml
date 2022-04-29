@@ -218,15 +218,15 @@ jobs:
           --container-restart-policy=never \
           --container-stdin \
           --container-tty \
-          --container-env=ZEBRA_SKIP_IPV6_TESTS=1,TEST_LWD_FULL_SYNC=1,ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_PATH=${{ env.ZEBRA_CACHED_STATE_PATH }},LIGHTWALLETD_DATA_DIR=${{ env.LIGHTWALLETD_DATA_DIR }} \
+          --container-env=ZEBRA_SKIP_IPV6_TESTS=1,TEST_LWD_FULL_SYNC=1,ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_DIR_VAR=${{ env.ZEBRA_CACHED_STATE_DIR_VAR }},LIGHTWALLETD_DATA_DIR_VAR=${{ env.LIGHTWALLETD_DATA_DIR_VAR }} \
           --machine-type ${{ env.MACHINE_TYPE }} \
           --scopes cloud-platform \
           --metadata=google-monitoring-enabled=true,google-logging-enabled=true \
           --tags zebrad \
           --zone "${{ env.ZONE }}"
         env:
-          ZEBRA_CACHED_STATE_PATH: '$HOME/.cache/zebra'
-          LIGHTWALLETD_DATA_DIR: '$HOME/.cache/lightwalletd'
+          ZEBRA_CACHED_STATE_DIR_VAR: '$HOME/.cache/zebra'
+          LIGHTWALLETD_DATA_DIR_VAR: '$HOME/.cache/lightwalletd'
 
       # TODO: this approach is very messy, but getting the just created container name is very error prone and GCP doesn't have a workaround for this without requiring a TTY
       # This TODO relates to the following issues:
@@ -351,15 +351,15 @@ jobs:
           --container-restart-policy=never \
           --container-stdin \
           --container-tty \
-          --container-env=ZEBRA_SKIP_IPV6_TESTS=1,TEST_LWD_FULL_SYNC=1,ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_PATH=${{ env.ZEBRA_CACHED_STATE_PATH }},LIGHTWALLETD_DATA_DIR=${{ env.LIGHTWALLETD_DATA_DIR }} \
+          --container-env=ZEBRA_SKIP_IPV6_TESTS=1,TEST_LWD_FULL_SYNC=1,ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_DIR_VAR=${{ env.ZEBRA_CACHED_STATE_DIR_VAR }},LIGHTWALLETD_DATA_DIR_VAR=${{ env.LIGHTWALLETD_DATA_DIR_VAR }} \
           --machine-type ${{ env.MACHINE_TYPE }} \
           --scopes cloud-platform \
           --metadata=google-monitoring-enabled=true,google-logging-enabled=true \
           --tags zebrad \
           --zone "${{ env.ZONE }}"
         env:
-          ZEBRA_CACHED_STATE_PATH: '$HOME/.cache/zebra'
-          LIGHTWALLETD_DATA_DIR: '$HOME/.cache/lightwalletd'
+          ZEBRA_CACHED_STATE_DIR_VAR: '$HOME/.cache/zebra'
+          LIGHTWALLETD_DATA_DIR_VAR: '$HOME/.cache/lightwalletd'
 
       # TODO: this approach is very messy, but getting the just created container name is very error prone and GCP doesn't have a workaround for this without requiring a TTY
       # This TODO relates to the following issues:
