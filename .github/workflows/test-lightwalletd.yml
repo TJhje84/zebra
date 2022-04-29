@@ -128,12 +128,23 @@ jobs:
             gcloud compute instances delete "${INSTANCE}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
           fi
 
+      - name: Get disk state name from gcloud
+        id: get-disk-name
+        run: |
+          GCP_STATE_DISK=$(gcloud compute images list --filter="name~zebrad-cache AND name~-tip" --format="value(NAME)" --sort-by=~creationTimestamp --limit=1)
+          echo "Disk: $GCP_STATE_DISK"
+          echo "Description: $(gcloud compute images describe $GCP_STATE_DISK --format='value(DESCRIPTION)')"
+
+          echo "CACHED_DISK_NAME=$GCP_STATE_DISK" >> $GITHUB_ENV
+
       # Creates Compute Engine virtual machine instance w/ disks
       - name: Create GCP compute instance
         run: |
           gcloud compute instances create-with-container "lwd-full-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" \
           --boot-disk-size 100GB \
           --boot-disk-type pd-ssd \
+          --create-disk=image=${{ env.CACHED_DISK_NAME }},name=lwd-full-sync-${{ env.GITHUB_SHA_SHORT }}-${{ env.NETWORK }},size=100GB,type=pd-ssd \
+          --container-mount-disk=mount-path='${{ env.ZEBRA_CACHED_STATE_DIR_VAR }}',name=lwd-full-sync-${{ env.GITHUB_SHA_SHORT }}-${{ env.NETWORK }} \
           --container-image ${{ env.GAR_BASE }}/lightwalletd-test:sha-${{ env.GITHUB_SHA_SHORT }} \
           --container-restart-policy=never \
           --container-stdin \
@@ -171,7 +182,7 @@ jobs:
           echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
           sleep 90
 
-      - name: Call RPCs with Zebra cached tip state
+      - name: Test LWD full sync with a Zebra tip state
         id: lwd-full-sync
         run: |
           for RETRY in 1 2 3 4; do
@@ -205,7 +216,7 @@ jobs:
       # Force the image creation as the disk is still attached, even though is not being used by the container
       - name: Create image from state disk
         run: |
-          gcloud compute images create lightwalletd-cache-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}-v${{ env.STATE_VERSION }}-${{ env.NETWORK }}-lwd \
+          gcloud compute images create lightwalletd-cache-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}-v${{ env.STATE_VERSION }}-${{ env.NETWORK }}-tip \
           --force \
           --source-disk=lwd-full-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
           --source-disk-zone=${{ env.ZONE }} \
@@ -214,7 +225,7 @@ jobs:
 
       - name: Delete test instance
         # Do not delete the instance if the sync timeouts in GitHub
-        if: ${{ steps.full-sync.outcome == 'success' || steps.full-sync.outcome == 'failure' }}
+        if: ${{ steps.lwd-full-sync.outcome == 'success' || steps.lwd-full-sync.outcome == 'failure' }}
         continue-on-error: true
         run: |
           gcloud compute instances delete "lwd-full-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
@@ -254,24 +265,35 @@ jobs:
       # Check if our destination compute instance exists and delete it
       - name: Delete existing instance with same SHA
         run: |
-          INSTANCE=$(gcloud compute instances list --filter=lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} --format='value(NAME)')
+          INSTANCE=$(gcloud compute instances list --filter=lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} --format='value(NAME)')
           if [ -z "${INSTANCE}" ]; then
             echo "No instance to delete"
           else
             gcloud compute instances delete "${INSTANCE}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
           fi
 
+      - name: Get disk state name from gcloud
+        id: get-disk-name
+        run: |
+          GCP_STATE_DISK=$(gcloud compute images list --filter="name~lightwalletd-cache AND name~-tip" --format="value(NAME)" --sort-by=~creationTimestamp --limit=1)
+          echo "Disk: $GCP_STATE_DISK"
+          echo "Description: $(gcloud compute images describe $GCP_STATE_DISK --format='value(DESCRIPTION)')"
+
+          echo "CACHED_DISK_NAME=$GCP_STATE_DISK" >> $GITHUB_ENV
+
       # Creates Compute Engine virtual machine instance w/ disks
       - name: Create GCP compute instance
         run: |
-          gcloud compute instances create-with-container "lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" \
+          gcloud compute instances create-with-container "lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" \
           --boot-disk-size 100GB \
           --boot-disk-type pd-ssd \
+          --create-disk=image=${{ env.CACHED_DISK_NAME }},name=lwd-update-sync-${{ env.GITHUB_SHA_SHORT }}-${{ env.NETWORK }},size=100GB,type=pd-ssd \
+          --container-mount-disk=mount-path='${{ env.ZEBRA_CACHED_STATE_DIR_VAR }}',name=lwd-update-sync-${{ env.GITHUB_SHA_SHORT }}-${{ env.NETWORK }} \
           --container-image ${{ env.GAR_BASE }}/lightwalletd-test:sha-${{ env.GITHUB_SHA_SHORT }} \
           --container-restart-policy=never \
           --container-stdin \
           --container-tty \
-          --container-env=TEST_LWD_FULL_SYNC=1,ZEBRA_TEST_LIGHTWALLETD=${{ env.ZEBRA_TEST_LIGHTWALLETD }},ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_DIR_VAR=${{ env.ZEBRA_CACHED_STATE_DIR_VAR }},LIGHTWALLETD_DATA_DIR_VAR=${{ env.LIGHTWALLETD_DATA_DIR_VAR }} \
+          --container-env=TEST_LWD_UPDATE_SYNC=1,ZEBRA_TEST_LIGHTWALLETD=${{ env.ZEBRA_TEST_LIGHTWALLETD }},ZEBRA_FORCE_USE_COLOR=1,ZEBRA_CACHED_STATE_DIR_VAR=${{ env.ZEBRA_CACHED_STATE_DIR_VAR }},LIGHTWALLETD_DATA_DIR_VAR=${{ env.LIGHTWALLETD_DATA_DIR_VAR }} \
           --machine-type ${{ env.MACHINE_TYPE }} \
           --scopes cloud-platform \
           --metadata=google-monitoring-enabled=true,google-logging-enabled=true \
@@ -290,12 +312,12 @@ jobs:
       # of this step before starting the following ones
       - name: Get container name from logs
         run: |
-          INSTANCE_ID=$(gcloud compute instances describe lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} --zone ${{ env.ZONE }} --format='value(id)')
+          INSTANCE_ID=$(gcloud compute instances describe lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} --zone ${{ env.ZONE }} --format='value(id)')
           echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
 
           CONTAINER_NAME=""
-          while [[ ${CONTAINER_NAME} != *"lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}"* ]]; do
-              CONTAINER_NAME=$(gcloud logging read 'log_name=projects/${{ env.PROJECT_ID }}/logs/cos_system AND jsonPayload.MESSAGE:lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}' --format='value(jsonPayload.MESSAGE)' --limit=1 | grep -o '...-lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}-....' | tr -d "'.")
+          while [[ ${CONTAINER_NAME} != *"lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}"* ]]; do
+              CONTAINER_NAME=$(gcloud logging read 'log_name=projects/${{ env.PROJECT_ID }}/logs/cos_system AND jsonPayload.MESSAGE:lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}' --format='value(jsonPayload.MESSAGE)' --limit=1 | grep -o '...-lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}-....' | tr -d "'.")
               echo "Using container: ${CONTAINER_NAME} from instance: ${INSTANCE_ID}"
               sleep 10
           done
@@ -304,12 +326,12 @@ jobs:
           echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
           sleep 90
 
-      - name: Call RPCs with Zebra cached tip state
+      - name: Test LWD update sync with a Zebra tip state
         id: lwd-update-sync-
         run: |
           for RETRY in 1 2 3 4; do
               gcloud compute ssh \
-              lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
+              lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
               --zone ${{ env.ZONE }} \
               --quiet \
               --ssh-flag="-o ServerAliveInterval=15" \
@@ -319,7 +341,7 @@ jobs:
 
           EXIT_CODE=$(\
           gcloud compute ssh \
-          lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
+          lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
           --zone ${{ env.ZONE }} \
           --quiet \
           --ssh-flag="-o ServerAliveInterval=5" \
@@ -332,7 +354,7 @@ jobs:
         if: ${{ steps.lwd-update-sync-.outcome == 'success' || steps.lwd-update-sync-.outcome == 'failure' }}
         continue-on-error: true
         run: |
-          gcloud compute instances delete "lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
+          gcloud compute instances delete "lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
 
       # Create image from disk
       # Force the image creation as the disk is still attached, even though is not being used by the container
@@ -340,14 +362,14 @@ jobs:
         run: |
           gcloud compute images create lightwalletd-cache-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}-v${{ env.STATE_VERSION }}-${{ env.NETWORK }}-lwd \
           --force \
-          --source-disk=lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
+          --source-disk=lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }} \
           --source-disk-zone=${{ env.ZONE }} \
           --storage-location=us \
           --description="Created from commit ${{ env.GITHUB_SHA_SHORT }} with height ${{ env.SYNC_HEIGHT }}"
 
       - name: Delete test instance
         # Do not delete the instance if the sync timeouts in GitHub
-        if: ${{ steps.full-sync.outcome == 'success' || steps.full-sync.outcome == 'failure' }}
+        if: ${{ steps.lwd-update-sync-.outcome == 'success' || steps.lwd-update-sync-.outcome == 'failure' }}
         continue-on-error: true
         run: |
-          gcloud compute instances delete "lwd-update-sync--${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
+          gcloud compute instances delete "lwd-update-sync-${{ env.GITHUB_REF_SLUG_URL }}-${{ env.GITHUB_SHA_SHORT }}" --zone "${{ env.ZONE }}" --delete-disks all --quiet
