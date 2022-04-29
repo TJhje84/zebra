@@ -5,12 +5,7 @@
 //! Test functions in this file will not be run.
 //! This file is only for test library code.
 
-use std::{
-    env,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{env, net::SocketAddr, path::Path, time::Duration};
 
 use zebra_test::{
     command::{Arguments, TestChild, TestDirExt, NO_MATCHES_REGEX_ITER},
@@ -33,6 +28,9 @@ use super::{
 
 use LightwalletdTestType::*;
 
+pub mod send_transaction_test;
+pub mod wallet_grpc;
+
 /// The name of the env var that enables Zebra lightwalletd integration tests.
 /// These tests need a `lightwalletd` binary in the test machine's path.
 ///
@@ -52,6 +50,9 @@ pub const ZEBRA_TEST_LIGHTWALLETD: &str = "ZEBRA_TEST_LIGHTWALLETD";
 /// Can also be used to speed up the [`sending_transactions_using_lightwalletd`] test,
 /// by skipping the lightwalletd initial sync.
 pub const LIGHTWALLETD_DATA_DIR_VAR: &str = "LIGHTWALLETD_DATA_DIR";
+
+/// The maximum time that a `lightwalletd` integration test is expected to run.
+pub const LIGHTWALLETD_TEST_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Should we skip Zebra lightwalletd integration tests?
 #[allow(clippy::print_stderr)]
