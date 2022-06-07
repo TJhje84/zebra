@@ -127,7 +127,7 @@ use crate::{
         InventoryChange, InventoryRegistry,
     },
     protocol::{
-        external::InventoryHash,
+        external::{types::Version, InventoryHash},
         internal::{Request, Response},
     },
     BoxError, Config, PeerError, SharedPeerError,
@@ -148,6 +148,13 @@ pub struct MorePeers;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CancelClientWork;
 
+/// Information that the [`PeerSet`] tracks for each peer connection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PeerConnectionInfo {
+    /// The Zcash network protocol version of this peer connection.
+    version: Version,
+}
+
 /// A [`tower::Service`] that abstractly represents "the rest of the network".
 ///
 /// # Security
@@ -158,11 +165,12 @@ pub struct CancelClientWork;
 /// connections have an ephemeral local or proxy port.)
 ///
 /// Otherwise, malicious peers could interfere with other peers' `PeerSet` state.
-pub struct PeerSet<D, C>
+pub struct PeerSet<D, C, PeerFilter>
 where
     D: Discover<Key = SocketAddr, Service = LoadTrackedClient> + Unpin,
     D::Error: Into<BoxError>,
     C: ChainTip,
+    PeerFilter: FnMut(SocketAddr, PeerConnectionInfo, bool) -> bool,
 {
     // Peer Tracking: New Peers
     //
@@ -208,6 +216,12 @@ where
 
     // Peer Validation
     //
+    /// A user-supplied function that chooses which peers to disconnect.
+    ///
+    /// This function is called with all peers before every peer set request.
+    /// If it returns `false`, the peer is disconnected.
+    want_peer_connection: PeerFilter,
+
     /// An endpoint to see the minimum peer protocol version in real time.
     ///
     /// The minimum version depends on the block height, and [`MinimumPeerVersion`] listens for
@@ -244,22 +258,39 @@ where
     last_peer_log: Option<Instant>,
 }
 
-impl<D, C> Drop for PeerSet<D, C>
+/// Keeps all peers in the peer set - does not disconnect any extra peers.
+///
+/// Arguments:
+/// _peer_remote_addr: The remote address of the peer.
+///                    For inbound connections, the address has an ephemeral port.
+/// _peer_info: The peer connection information tracked by the [`PeerSet`].
+/// _is_busy: `true` if the peer connection is handling an inbound or outbound request.
+pub fn keep_all_peer_connections(
+    _peer_remote_addr: SocketAddr,
+    _peer_info: PeerConnectionInfo,
+    _is_busy: bool,
+) -> bool {
+    true
+}
+
+impl<D, C, PeerFilter> Drop for PeerSet<D, C, PeerFilter>
 where
     D: Discover<Key = SocketAddr, Service = LoadTrackedClient> + Unpin,
     D::Error: Into<BoxError>,
     C: ChainTip,
+    PeerFilter: FnMut(SocketAddr, PeerConnectionInfo, bool) -> bool,
 {
     fn drop(&mut self) {
         self.shut_down_tasks_and_channels()
     }
 }
 
-impl<D, C> PeerSet<D, C>
+impl<D, C, PeerFilter> PeerSet<D, C, PeerFilter>
 where
     D: Discover<Key = SocketAddr, Service = LoadTrackedClient> + Unpin,
     D::Error: Into<BoxError>,
     C: ChainTip,
+    PeerFilter: FnMut(SocketAddr, PeerConnectionInfo, bool) -> bool,
 {
     /// Construct a peerset which uses `discover` to manage peer connections.
     ///
@@ -272,7 +303,9 @@ where
     ///                and shuts down all the tasks as soon as one task exits;
     /// - `inv_stream`: receives inventory changes from peers,
     ///                 allowing the peer set to direct inventory requests;
-    /// - `address_book`: when peer set is busy, it logs address book diagnostics.
+    /// - `address_metrics`: logs address book diagnostics;
+    /// - `minimum_peer_version`: dynamic minimum peer version, based on the state tip height;
+    /// - `want_peer_connection`: a function that returns true when a peer should stay connected.
     pub fn new(
         config: &Config,
         discover: D,
@@ -281,6 +314,7 @@ where
         inv_stream: broadcast::Receiver<InventoryChange>,
         address_metrics: watch::Receiver<AddressMetrics>,
         minimum_peer_version: MinimumPeerVersion<C>,
+        want_peer_connection: PeerFilter,
     ) -> Self {
         Self {
             // New peers
@@ -298,6 +332,7 @@ where
             cancel_handles: HashMap::new(),
 
             // Peer validation
+            want_peer_connection,
             minimum_peer_version,
             peerset_total_connection_limit: config.peerset_total_connection_limit(),
 
@@ -513,6 +548,32 @@ where
                     false
                 }
             });
+        }
+    }
+
+    /// Calls the user-supplied peer filter function on each peer,
+    /// and disconnects peers that are unwanted.
+    fn filter_peer_connections(&mut self) {
+        // Filter ready peers
+        for ready_peer_addr in self.ready_services.keys() {
+            let version = self.ready_services.get(ready_peer_addr).unwrap().version();
+            let peer_info = PeerConnectionInfo { version };
+
+            if !(self.want_peer_connection)(*ready_peer_addr, peer_info, true) {
+                self.remove(ready_peer_addr);
+            }
+        }
+
+        // Filter busy peers
+        for busy_peer_addr in self.cancel_handles.keys() {
+            // TODO: store PeerConnectionInfo with the cancel handle
+            //       add a connection open timestamp to PeerConnectionInfo
+            let version = Version(170100);
+            let peer_info = PeerConnectionInfo { version };
+
+            if !(self.want_peer_connection)(*busy_peer_addr, peer_info, false) {
+                self.remove(busy_peer_addr);
+            }
         }
     }
 
@@ -875,11 +936,12 @@ where
     }
 }
 
-impl<D, C> Service<Request> for PeerSet<D, C>
+impl<D, C, PeerFilter> Service<Request> for PeerSet<D, C, PeerFilter>
 where
     D: Discover<Key = SocketAddr, Service = LoadTrackedClient> + Unpin,
     D::Error: Into<BoxError>,
     C: ChainTip,
+    PeerFilter: FnMut(SocketAddr, PeerConnectionInfo, bool) -> bool,
 {
     type Response = Response;
     type Error = BoxError;
@@ -894,6 +956,7 @@ where
         self.disconnect_from_outdated_peers();
         self.inventory_registry.poll_inventory(cx)?;
         self.poll_unready(cx);
+        self.filter_peer_connections();
 
         self.log_peer_set_size();
         self.update_metrics();

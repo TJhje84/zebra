@@ -31,7 +31,10 @@ use crate::{
     constants,
     meta_addr::{MetaAddr, MetaAddrChange},
     peer::{self, HandshakeRequest, MinimumPeerVersion, OutboundConnectorRequest},
-    peer_set::{set::MorePeers, ActiveConnectionCounter, CandidateSet, ConnectionTracker, PeerSet},
+    peer_set::{
+        set::{MorePeers, PeerConnectionInfo},
+        ActiveConnectionCounter, CandidateSet, ConnectionTracker, PeerSet,
+    },
     AddressBook, BoxError, Config, Request, Response,
 };
 
@@ -45,6 +48,14 @@ type DiscoveredPeer = Result<(SocketAddr, peer::Client), BoxError>;
 
 /// Initialize a peer set, using a network `config`, `inbound_service`,
 /// and `latest_chain_tip`.
+///
+/// `want_peer_connection` is an optional peer set connection filter. This filter function should
+/// return `false` to disconnect a peer. The filter is called on every peer before the peer set
+/// sends each request. (The crawler sends a new request every minute, even when there are no
+/// application requests.)
+///
+/// Use [`keep_all_peer_connections`](crate::peer_set::set::keep_all_peer_connections) to keep all
+/// the current peers, and not disconnect any extra peers.
 ///
 /// The peer set abstracts away peer management to provide a
 /// [`tower::Service`] representing "the network" that load-balances requests
@@ -73,10 +84,11 @@ type DiscoveredPeer = Result<(SocketAddr, peer::Client), BoxError>;
 ///
 /// If `config.config.peerset_initial_target_size` is zero.
 /// (zebra-network expects to be able to connect to at least one peer.)
-pub async fn init<S, C>(
+pub async fn init<S, C, PeerFilter>(
     config: Config,
     inbound_service: S,
     latest_chain_tip: C,
+    want_peer_connection: PeerFilter,
 ) -> (
     Buffer<BoxService<Request, Response, BoxError>, Request>,
     Arc<std::sync::Mutex<AddressBook>>,
@@ -85,6 +97,7 @@ where
     S: Service<Request, Response = Response, Error = BoxError> + Clone + Send + 'static,
     S::Future: Send + 'static,
     C: ChainTip + Clone + Send + 'static,
+    PeerFilter: FnMut(SocketAddr, PeerConnectionInfo, bool) -> bool + Send + 'static,
 {
     // If we want Zebra to operate with no network,
     // we should implement a `zebrad` command that doesn't use `zebra-network`.
@@ -160,6 +173,7 @@ where
         inv_receiver,
         address_metrics,
         MinimumPeerVersion::new(latest_chain_tip, config.network),
+        want_peer_connection,
     );
     let peer_set = Buffer::new(BoxService::new(peer_set), constants::PEERSET_BUFFER_SIZE);
 
