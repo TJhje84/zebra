@@ -33,7 +33,7 @@ use tracing::{instrument, Instrument, Span};
 use tower::buffer::Buffer;
 
 use zebra_chain::{
-    block,
+    block::{self, CountedHeader},
     diagnostic::CodeTimer,
     parameters::{Network, NetworkUpgrade},
     transparent,
@@ -489,15 +489,15 @@ impl StateService {
     }
 
     /// Return true if `hash` is in the current best chain.
+    #[allow(dead_code)]
     pub fn best_chain_contains(&self, hash: block::Hash) -> bool {
-        self.best_height_by_hash(hash).is_some()
+        read::chain_contains_hash(self.mem.best_chain(), self.disk.db(), hash)
     }
 
     /// Return the height for the block at `hash`, if `hash` is in the best chain.
+    #[allow(dead_code)]
     pub fn best_height_by_hash(&self, hash: block::Hash) -> Option<block::Height> {
-        self.mem
-            .best_height_by_hash(hash)
-            .or_else(|| self.disk.db().height(hash))
+        read::height_by_hash(self.mem.best_chain(), self.disk.db(), hash)
     }
 
     /// Return the height for the block at `hash` in any chain.
@@ -537,155 +537,6 @@ impl StateService {
             service: self,
             state: block_iter::IterState::NonFinalized(hash),
         }
-    }
-
-    /// Find the first hash that's in the peer's `known_blocks` and the local best chain.
-    ///
-    /// Returns `None` if:
-    ///   * there is no matching hash in the best chain, or
-    ///   * the state is empty.
-    fn find_best_chain_intersection(&self, known_blocks: Vec<block::Hash>) -> Option<block::Hash> {
-        // We can get a block locator request before we have downloaded the genesis block
-        self.best_tip()?;
-
-        known_blocks
-            .iter()
-            .find(|&&hash| self.best_chain_contains(hash))
-            .cloned()
-    }
-
-    /// Returns a list of block hashes in the best chain, following the `intersection` with the best
-    /// chain. If there is no intersection with the best chain, starts from the genesis hash.
-    ///
-    /// Includes finalized and non-finalized blocks.
-    ///
-    /// Stops the list of hashes after:
-    ///   * adding the best tip,
-    ///   * adding the `stop` hash to the list, if it is in the best chain, or
-    ///   * adding `max_len` hashes to the list.
-    ///
-    /// Returns an empty list if the state is empty,
-    /// or if the `intersection` is the best chain tip.
-    pub fn collect_best_chain_hashes(
-        &self,
-        intersection: Option<block::Hash>,
-        stop: Option<block::Hash>,
-        max_len: usize,
-    ) -> Vec<block::Hash> {
-        assert!(max_len > 0, "max_len must be at least 1");
-
-        // We can get a block locator request before we have downloaded the genesis block
-        let chain_tip_height = if let Some((height, _)) = self.best_tip() {
-            height
-        } else {
-            tracing::debug!(
-                response_len = ?0,
-                "responding to peer GetBlocks or GetHeaders with empty state",
-            );
-
-            return Vec::new();
-        };
-
-        let intersection_height = intersection.map(|hash| {
-            self.best_height_by_hash(hash)
-                .expect("the intersection hash must be in the best chain")
-        });
-        let max_len_height = if let Some(intersection_height) = intersection_height {
-            let max_len = i32::try_from(max_len).expect("max_len fits in i32");
-
-            // start after the intersection_height, and return max_len hashes
-            (intersection_height + max_len)
-                .expect("the Find response height does not exceed Height::MAX")
-        } else {
-            let max_len = u32::try_from(max_len).expect("max_len fits in u32");
-            let max_height = block::Height(max_len);
-
-            // start at genesis, and return max_len hashes
-            (max_height - 1).expect("max_len is at least 1, and does not exceed Height::MAX + 1")
-        };
-
-        let stop_height = stop.and_then(|hash| self.best_height_by_hash(hash));
-
-        // Compute the final height, making sure it is:
-        //   * at or below our chain tip, and
-        //   * at or below the height of the stop hash.
-        let final_height = std::cmp::min(max_len_height, chain_tip_height);
-        let final_height = stop_height
-            .map(|stop_height| std::cmp::min(final_height, stop_height))
-            .unwrap_or(final_height);
-        let final_hash = self
-            .best_hash(final_height)
-            .expect("final height must have a hash");
-
-        // We can use an "any chain" method here, because `final_hash` is in the best chain
-        let mut res: Vec<_> = self
-            .any_ancestor_blocks(final_hash)
-            .map(|block| block.hash())
-            .take_while(|&hash| Some(hash) != intersection)
-            .inspect(|hash| {
-                tracing::trace!(
-                    ?hash,
-                    height = ?self.best_height_by_hash(*hash)
-                        .expect("if hash is in the state then it should have an associated height"),
-                    "adding hash to peer Find response",
-                )
-            })
-            .collect();
-        res.reverse();
-
-        tracing::debug!(
-            ?final_height,
-            response_len = ?res.len(),
-            ?chain_tip_height,
-            ?stop_height,
-            ?intersection_height,
-            "responding to peer GetBlocks or GetHeaders",
-        );
-
-        // Check the function implements the Find protocol
-        assert!(
-            res.len() <= max_len,
-            "a Find response must not exceed the maximum response length"
-        );
-        assert!(
-            intersection
-                .map(|hash| !res.contains(&hash))
-                .unwrap_or(true),
-            "the list must not contain the intersection hash"
-        );
-        if let (Some(stop), Some((_, res_except_last))) = (stop, res.split_last()) {
-            assert!(
-                !res_except_last.contains(&stop),
-                "if the stop hash is in the list, it must be the final hash"
-            );
-        }
-
-        res
-    }
-
-    /// Finds the first hash that's in the peer's `known_blocks` and the local best chain.
-    /// Returns a list of hashes that follow that intersection, from the best chain.
-    ///
-    /// Starts from the first matching hash in the best chain, ignoring all other hashes in
-    /// `known_blocks`. If there is no matching hash in the best chain, starts from the genesis
-    /// hash.
-    ///
-    /// Includes finalized and non-finalized blocks.
-    ///
-    /// Stops the list of hashes after:
-    ///   * adding the best tip,
-    ///   * adding the `stop` hash to the list, if it is in the best chain, or
-    ///   * adding 500 hashes to the list.
-    ///
-    /// Returns an empty list if the state is empty.
-    pub fn find_best_chain_hashes(
-        &self,
-        known_blocks: Vec<block::Hash>,
-        stop: Option<block::Hash>,
-        max_len: usize,
-    ) -> Vec<block::Hash> {
-        let intersection = self.find_best_chain_intersection(known_blocks);
-        self.collect_best_chain_hashes(intersection, stop, max_len)
     }
 
     /// Assert some assumptions about the prepared `block` before it is validated.
@@ -1002,18 +853,36 @@ impl Service<Request> for StateService {
                     "type" => "find_block_hashes",
                 );
 
-                const MAX_FIND_BLOCK_HASHES_RESULTS: usize = 500;
+                const MAX_FIND_BLOCK_HASHES_RESULTS: u32 = 500;
 
                 let timer = CodeTimer::start();
 
-                // TODO: move this work into the future, like Block and Transaction?
-                let res =
-                    self.find_best_chain_hashes(known_blocks, stop, MAX_FIND_BLOCK_HASHES_RESULTS);
+                // Prepare data for concurrent execution
+                let best_chain = self.mem.best_chain().cloned();
+                let db = self.disk.db().clone();
 
-                // The work is all done, the future just returns the result.
-                timer.finish(module_path!(), line!(), "FindBlockHashes");
+                // # Performance
+                //
+                // Allow other async tasks to make progress while the block is being read from disk.
+                let span = Span::current();
+                tokio::task::spawn_blocking(move || {
+                    span.in_scope(move || {
+                        let res = read::find_chain_hashes(
+                            best_chain,
+                            &db,
+                            known_blocks,
+                            stop,
+                            MAX_FIND_BLOCK_HASHES_RESULTS,
+                        );
 
-                async move { Ok(Response::BlockHashes(res)) }.boxed()
+                        // The work is done in the future.
+                        timer.finish(module_path!(), line!(), "FindBlockHashes");
+
+                        Ok(Response::BlockHashes(res))
+                    })
+                })
+                .map(|join_result| join_result.expect("panic in Request::Block"))
+                .boxed()
             }
             Request::FindBlockHeaders { known_blocks, stop } => {
                 metrics::counter!(
@@ -1025,50 +894,41 @@ impl Service<Request> for StateService {
 
                 // Before we spawn the future, get a consistent set of chain hashes from the state.
 
-                const MAX_FIND_BLOCK_HEADERS_RESULTS: usize = 160;
+                const MAX_FIND_BLOCK_HEADERS_RESULTS: u32 = 160;
                 // Zcashd will blindly request more block headers as long as it
                 // got 160 block headers in response to a previous query, EVEN
                 // IF THOSE HEADERS ARE ALREADY KNOWN.  To dodge this behavior,
                 // return slightly fewer than the maximum, to get it to go away.
                 //
                 // https://github.com/bitcoin/bitcoin/pull/4468/files#r17026905
-                let count = MAX_FIND_BLOCK_HEADERS_RESULTS - 2;
+                let max_len = MAX_FIND_BLOCK_HEADERS_RESULTS - 2;
 
                 let timer = CodeTimer::start();
 
-                // TODO: move this work into the future, like Block and Transaction?
-                //       return heights instead, to improve lookup performance?
-                let res = self.find_best_chain_hashes(known_blocks, stop, count);
-
-                // And prepare data for concurrent execution
+                // Prepare data for concurrent execution
                 let best_chain = self.mem.best_chain().cloned();
                 let db = self.disk.db().clone();
 
                 // # Performance
                 //
-                // Now we have the chain hashes, we can read the headers concurrently,
-                // which allows other async tasks to make progress while data is being read from disk.
+                // Allow other async tasks to make progress while the block is being read from disk.
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
+                        let res =
+                            read::find_chain_headers(best_chain, &db, known_blocks, stop, max_len);
                         let res = res
-                            .iter()
-                            .map(|&hash| {
-                                let header =
-                                    read::block_header(best_chain.clone(), &db, hash.into())
-                                        .expect("block header for found hash is in the best chain");
-
-                                block::CountedHeader { header }
-                            })
+                            .into_iter()
+                            .map(|header| CountedHeader { header })
                             .collect();
 
-                        // Some of the work is done in the future.
+                        // The work is done in the future.
                         timer.finish(module_path!(), line!(), "FindBlockHeaders");
 
                         Ok(Response::BlockHeaders(res))
                     })
                 })
-                .map(|join_result| join_result.expect("panic in Request::FindBlockHeaders"))
+                .map(|join_result| join_result.expect("panic in Request::Block"))
                 .boxed()
             }
         }
