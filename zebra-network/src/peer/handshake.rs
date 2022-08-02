@@ -99,6 +99,13 @@ where
     }
 }
 
+/// The metadata for a peer connection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ConnectionInfo {
+    /// The network protocol version reported by the remote peer.
+    pub version: Version,
+}
+
 /// The peer address that we are handshaking with.
 ///
 /// Typically, we can rely on outbound addresses, but inbound addresses don't
@@ -967,6 +974,9 @@ where
                 })
                 .boxed();
 
+            let connection_info = ConnectionInfo {
+                version: remote_version,
+            };
             let server = Connection::new(
                 inbound_service,
                 server_rx,
@@ -996,12 +1006,12 @@ where
             );
 
             let client = Client {
+                connection_info,
                 shutdown_tx: Some(shutdown_tx),
                 server_tx,
                 inv_collector,
                 transient_addr: connected_addr.get_transient_addr(),
                 error_slot,
-                version: remote_version,
                 connection_task,
                 heartbeat_task,
             };
