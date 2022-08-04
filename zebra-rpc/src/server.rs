@@ -71,11 +71,13 @@ impl RpcServer {
             // Use a different tokio executor from the rest of Zebra,
             // so that large RPCs and any task handling bugs don't impact Zebra.
             //
-            // We allow 4 RPC threads, to support multiple instances and concurrent queries.
+            // If we use more than one RPC thread, multiple Zebra instances can share the same RPC port.
+            // That is unexpected behaviour, so we dont enable it by default.
             //
-            // TODO: make the number of RPC threads configurable?
+            // TODO: make the number of RPC threads configurable,
+            // but warn users this allows multiple Zebra instances to share the RPC port?
             let server = ServerBuilder::new(io)
-                .threads(4)
+                .threads(1)
                 // TODO: disable this security check if we see errors from lightwalletd.
                 //.allowed_hosts(DomainsValidation::Disabled)
                 .request_middleware(FixHttpRequestMiddleware)
