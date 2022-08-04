@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use color_eyre::{eyre::eyre, Report};
 use ed25519_zebra::*;
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::stream::{FuturesOrdered, StreamExt};
 use rand::thread_rng;
 use tower::{Service, ServiceExt};
 use tower_batch::Batch;
@@ -24,7 +24,7 @@ async fn sign_and_verify<V>(
 where
     V: Service<Ed25519Item, Response = ()>,
 {
-    let results = FuturesUnordered::new();
+    let mut results = FuturesOrdered::new();
     for i in 0..n {
         let span = tracing::trace_span!("sig", i);
         let sk = SigningKey::new(thread_rng());
@@ -55,7 +55,7 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn batch_flushes_on_max_items() -> Result<(), Report> {
     use tokio::time::timeout;
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     // Use a very long max_latency and a short timeout to check that
     // flushing is happening based on hitting max_items.
@@ -73,7 +73,7 @@ async fn batch_flushes_on_max_items() -> Result<(), Report> {
 #[tokio::test(flavor = "multi_thread")]
 async fn batch_flushes_on_max_latency() -> Result<(), Report> {
     use tokio::time::timeout;
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     // Use a very high max_items and a short timeout to check that
     // flushing is happening based on hitting max_latency.
@@ -95,7 +95,7 @@ async fn batch_flushes_on_max_latency() -> Result<(), Report> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn fallback_verification() -> Result<(), Report> {
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     // Create our own verifier, so we don't shut down a shared verifier used by other tests.
     let verifier = Fallback::new(
